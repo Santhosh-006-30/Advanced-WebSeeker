@@ -1,0 +1,10 @@
+
+; Content-Type manipulation
+application/json
+text/plain
+application/x-www-form-urlencoded
+; Referer Header Bypasses
+<meta name="referrer" content="no-referrer">
+; Method Overrides (used in logic)
+_method=POST
+_method=GET
