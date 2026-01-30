@@ -17,11 +17,26 @@ from config import Colors
 
 class APIDiscovery:
     def __init__(self, target_url, timeout=10):
-        self.target_url = target_url.rstrip('/')
-        self.base_domain = urlparse(target_url).netloc
+        # Parse the URL to extract base components
+        parsed = urlparse(target_url)
+        
+        # Extract the base URL (scheme + host) - this is where we fuzz from
+        self.base_url = f"{parsed.scheme}://{parsed.netloc}"
+        
+        # Keep the original target for reference
+        self.original_target = target_url.rstrip('/')
+        
+        # For fuzzing, we use the base URL
+        self.target_url = self.base_url
+        
+        self.base_domain = parsed.netloc
         self.timeout = timeout
         self.discovered_endpoints = set()
         self.api_base_paths = []
+        
+        # If the user provided a specific path, add it as a discovered endpoint
+        if parsed.path and parsed.path != '/':
+            self.discovered_endpoints.add(target_url.rstrip('/'))
         
         # Common API prefixes to check
         self.api_prefixes = [
@@ -54,6 +69,9 @@ class APIDiscovery:
             'articles', 'blogs', 'news', 'events', 'notifications',
             'messages', 'chats', 'conversations', 'files', 'uploads',
             'images', 'media', 'documents', 'attachments',
+            
+            # JSONPlaceholder / Common REST Resources
+            'todos', 'albums', 'photos', 'users', 'posts', 'comments',
             
             # Admin/Management
             'admin', 'dashboard', 'stats', 'analytics', 'reports',

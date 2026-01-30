@@ -8,7 +8,7 @@ build/
 develop-eggs/
 dist/
 downloads/
-eggs/
+eggs/w
 .eggs/
 lib/
 lib64/
