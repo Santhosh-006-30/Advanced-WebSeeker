@@ -64,6 +64,9 @@ def scan(url):
                     "payload": payload,
                     "evidence": f"Reflected Payload found in response: ...{payload}... (Context hidden)",
                     "location": f"Parameter: q (in URL: {test_url})",
+                    "endpoint": url,
+                    "parameter": "q",
+                    "confidence": "Medium", # Reflected but not executing in browser verification
                     "impact": info["impact"],
                     "severity": "Medium",
                     "recommendation": info["recommendation"]

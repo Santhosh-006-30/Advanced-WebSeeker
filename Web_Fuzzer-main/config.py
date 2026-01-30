@@ -1,13 +1,19 @@
 
-# Configuration Settings
+import os
+
+try:
+    from rich.console import Console
+    from rich.theme import Theme
+    HAS_RICH = True
+except ImportError:
+    HAS_RICH = False
 
 # Scan Settings
-# Scan Settings
-TIMEOUT = 5
-MAX_THREADS = 100
-DELAY = 0  # Delay between requests in seconds (to avoid DoS)
+TIMEOUT = 10
+MAX_THREADS = 50
+DELAY = 0.1  # Delay between requests in seconds (to avoid DoS)
 
-# User-Agent Rotation (Simple list for now)
+# User-Agent Rotation
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -17,8 +23,75 @@ USER_AGENTS = [
 # Reporting
 REPORT_FILE = "report.html"
 
-# Colors for Console Output
+# Rich Console Configuration
+if HAS_RICH:
+    custom_theme = Theme({
+        "info": "cyan",
+        "warning": "yellow",
+        "error": "bold red",
+        "success": "bold green",
+        "vuln": "bold magenta",
+        "header": "bold blue"
+    })
+    console = Console(theme=custom_theme)
+else:
+    class MockConsole:
+        def print(self, msg, style=None):
+            # Strip simple tags for readability if needed, or just print
+            print(msg)
+        def input(self, msg):
+            return input(msg)
+        def status(self, msg):
+            class Context:
+                def __enter__(self): print(f"[*] {msg}")
+                def __exit__(self, *args): pass
+            return Context()
+            
+    console = MockConsole()
+
 class Colors:
+    if HAS_RICH:
+        @staticmethod
+        def info(msg):
+            console.print(f"[info][INFO] {msg}[/info]")
+
+        @staticmethod
+        def success(msg):
+            console.print(f"[success][SUCCESS] {msg}[/success]")
+
+        @staticmethod
+        def warning(msg):
+            console.print(f"[warning][WARN] {msg}[/warning]")
+            
+        @staticmethod
+        def error(msg):
+            console.print(f"[error][ERROR] {msg}[/error]")
+        
+        @staticmethod
+        def vuln(msg):
+            console.print(f"[vuln][VULN] {msg}[/vuln]")
+    else:
+        @staticmethod
+        def info(msg):
+            print(f"[INFO] {msg}")
+
+        @staticmethod
+        def success(msg):
+            print(f"[SUCCESS] {msg}")
+
+        @staticmethod
+        def warning(msg):
+            print(f"[WARN] {msg}")
+            
+        @staticmethod
+        def error(msg):
+            print(f"[ERROR] {msg}")
+        
+        @staticmethod
+        def vuln(msg):
+            print(f"[VULN] {msg}")
+    
+    # ANSI codes for fallback if needed in raw strings elsewhere
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
     OKCYAN = '\033[96m'
@@ -28,23 +101,3 @@ class Colors:
     ENDC = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
-    
-    @staticmethod
-    def info(msg):
-        print(f"[INFO] {msg}")
-
-    @staticmethod
-    def success(msg):
-        print(f"[OK] {msg}")
-
-    @staticmethod
-    def warning(msg):
-        print(f"[WARN] {msg}")
-        
-    @staticmethod
-    def error(msg):
-        print(f"[ERROR] {msg}")
-    
-    @staticmethod
-    def vuln(msg):
-        print(f"[VULN] {msg}")

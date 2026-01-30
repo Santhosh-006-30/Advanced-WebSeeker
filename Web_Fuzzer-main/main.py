@@ -1,11 +1,15 @@
 
 import sys
 import argparse
-from config import Colors
+import time
+from config import Colors, console
 from scanners import sql_injection, xss, auth, sensitive_data, injection, file_attacks, misconfig, ssrf, integrity, csrf
 from reporting import html_generator, popup
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.panel import Panel
+from rich.table import Table
 
-LOGO = """
+LOGO = r"""
     _    _      _      ______                      
    | |  | |    | |     |  ___|                     
    | |  | | ___| |__   | |_ _   _ ___________ _ __ 
@@ -17,15 +21,16 @@ LOGO = """
 """
 
 from core.crawler import Crawler
+from core.api_discovery import APIDiscovery
 from analysis.risk import RiskAnalyzer
 
 def main():
-    print(Colors.HEADER + LOGO + Colors.ENDC)
+    console.print(Panel.fit(f"[bold blue]{LOGO}[/bold blue]", border_style="blue"))
     
     # Argument Parsing
     if len(sys.argv) < 2:
-        print(f"{Colors.WARNING}Usage: python main.py <url>{Colors.ENDC}")
-        url = input("Enter Target URL: ").strip()
+        console.print(f"[warning]Usage: python main.py <url>[/warning]")
+        url = console.input("[bold green]Enter Target URL: [/bold green]").strip()
         if not url:
             sys.exit(1)
     else:
@@ -33,19 +38,84 @@ def main():
 
     if not url.startswith("http"):
         url = "http://" + url
+    
+    # --- Step 0: Validate Target URL ---
+    import requests
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    
+    # Headers for API requests
+    api_headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/html, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Connection': 'keep-alive',
+    }
+    
+    Colors.info(f"Validating target: {url}...")
+    
+    # Retry logic for cold-start servers (like Render free tier)
+    max_retries = 3
+    response = None
+    
+    for attempt in range(max_retries):
+        try:
+            # Check connectivity with proper headers
+            response = requests.get(url, timeout=30, verify=False, headers=api_headers)
+            Colors.success(f"Target is online! [{response.status_code}]")
+            break
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries - 1:
+                Colors.warning(f"Connection attempt {attempt + 1} failed. Retrying in 3 seconds... (Server might be warming up)")
+                time.sleep(3)
+            else:
+                Colors.error(f"Could not connect to target after {max_retries} attempts: {e}")
+                Colors.error("Please check the URL is correct and reachable.")
+                sys.exit(1)
+    
+    if response:
+        # Handle Redirects
+        if response.url != url:
+            Colors.warning(f"Redirected to: {response.url}")
+            choice = console.input(f"[warning]Do you want to scan this redirected URL? (y/n): [/warning]").strip().lower()
+            if choice == 'y' or choice == '':
+                url = response.url
+            else:
+                Colors.info("Keeping original URL (Warning: Scan might be less effective).")
 
     user_name = "Admin"
     
-    # --- Step 1: Discover Endpoints (Crawler) ---
-    crawler = Crawler(url)
-    discovered_urls = crawler.crawl(depth=2)
+    # --- Step 1: Choose Discovery Mode ---
+    console.print("\n[bold cyan]Choose Discovery Mode:[/bold cyan]")
+    console.print("  [1] API Endpoint Discovery (Recommended for testing)")
+    console.print("  [2] Frontend Crawling (Traditional mode)")
+    
+    mode_choice = console.input("\n[bold green]Enter choice (1 or 2): [/bold green]").strip()
+    
+    if mode_choice == "2":
+        # Traditional Frontend Crawling
+        with console.status("[bold green]Crawling target for endpoints...[/bold green]") as status:
+            crawler = Crawler(url)
+            discovered_urls = crawler.crawl(depth=2)
+    else:
+        # API Endpoint Discovery (Default)
+        Colors.info("Starting API Endpoint Discovery...")
+        console.print("[dim]This will analyze JavaScript files, fuzz common API paths, and discover actual API endpoints.[/dim]\n")
+        
+        api_discovery = APIDiscovery(url)
+        discovered_urls = api_discovery.discover()
+        
+        if not discovered_urls:
+            Colors.warning("No API endpoints discovered. Falling back to frontend crawling...")
+            with console.status("[bold green]Crawling target for endpoints...[/bold green]") as status:
+                crawler = Crawler(url)
+                discovered_urls = crawler.crawl(depth=2)
     
     if not discovered_urls:
-        Colors.error("Crawler failed to reach target. Exiting.")
+        Colors.error("No endpoints discovered. Exiting.")
         sys.exit(1)
 
     # --- Scan Registry (Track all module results) ---
-    # We will accumulate results across ALL endpoints
     scan_results = {
         "SQL Injection": [],
         "Cross-Site Scripting (XSS)": [],
@@ -65,13 +135,10 @@ def main():
 
     Colors.info(f"Starting Exhaustive Scan on {len(discovered_urls)} endpoints...")
     
-    colors_printed = False
-    
-    # Track scanned base URLs to avoid duplicate scans (e.g., product.php?id=1 vs product.php?id=2)
+    # Track scanned base URLs to avoid duplicate scans
     scanned_bases = set()
     
     try:
-        # --- Step 2: Loop Scanners on Discovered URLs ---
         # --- Step 2: Parallel Scanners on Discovered URLs ---
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -88,29 +155,22 @@ def main():
         )
 
         for target_url in discovered_urls:
-            # Normalize and De-duplicate
             base_path = target_url.split("?")[0]
-            
-            # Skip static files
             if base_path.lower().endswith(STATIC_EXTENSIONS):
                 continue
-                
             if base_path in scanned_bases:
                 continue
             scanned_bases.add(base_path)
-            
-            # Add to scan list (Scan EVERYTHING that isn't static)
             targets_to_scan.append(target_url)
             
-            if len(scanned_bases) >= 20: # Increased limit slightly since we scan more now
-                Colors.warning("Hit limit of 20 unique endpoints. Stopping crawl selection.")
+            if len(scanned_bases) >= 100: 
+                Colors.warning("Hit limit of 100 unique endpoints. Stopping crawl selection.")
                 break
         
         if targets_to_scan:
-            Colors.info(f"Selected {len(targets_to_scan)} unique endpoints for parallel scanning (XSS/SQLi).")
+            Colors.info(f"Selected {len(targets_to_scan)} unique endpoints for parallel scanning.")
 
             def scan_endpoint_worker(target_url):
-                """Worker function to scan a single endpoint"""
                 endpoint_results = {
                     "Command Injection": [],
                     "Directory Traversal": [],
@@ -119,8 +179,6 @@ def main():
                     "Cross-Site Scripting (XSS)": [],
                     "SSRF": []
                 }
-                
-                Colors.info(f"Scanning Endpoint: {target_url}")
                 
                 # Fast Checks
                 endpoint_results["Command Injection"].extend(injection.scan_command_injection(target_url))
@@ -134,51 +192,41 @@ def main():
                 
                 return endpoint_results
 
-            # Run scans in parallel (Limit to 10 concurrent endpoints to balance thread usage)
-            # Each endpoint can panic up to MAX_THREADS internal threads, so we limit concurrency here.
-            with ThreadPoolExecutor(max_workers=10) as executor:
-                future_to_url = {executor.submit(scan_endpoint_worker, url): url for url in targets_to_scan}
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                transient=True
+            ) as progress:
+                task = progress.add_task(f"[cyan]Scanning {len(targets_to_scan)} endpoints...", total=len(targets_to_scan))
                 
-                for future in as_completed(future_to_url):
-                    url = future_to_url[future]
-                    try:
+                with ThreadPoolExecutor(max_workers=10) as executor:
+                    future_to_url = {executor.submit(scan_endpoint_worker, url): url for url in targets_to_scan}
+                    
+                    for future in as_completed(future_to_url):
                         data = future.result()
-                        # Aggregate results
                         for category, findings in data.items():
                             if category in scan_results:
                                 scan_results[category].extend(findings)
-                    except Exception as e:
-                        Colors.error(f"Error scanning {url}: {e}")
+                        progress.advance(task)
         
-        # --- Step 3: Global/Generic Scanners (Run once on Base URL) ---
-        # Protected by the same try/except block now
-        
-        # Sensitive Data
-        scan_results["Sensitive Data Exposure"] = sensitive_data.scan(url)
-        
-        # Broken Auth
-        scan_results["Broken Authentication"] = auth.scan(url)
-
-        # File Upload
-        upload_endpoint = url + "/upload.php"
-        check_endpoint = url + "/uploads"
-        scan_results["Insecure File Upload"] = file_attacks.scan_insecure_file_upload(upload_endpoint, check_endpoint)
-        
-        # Misconfig
-        scan_results["Security Misconfiguration"] = misconfig.scan_security_misconfiguration(url)
-        # scan_results["CSRF"] = misconfig.scan_csrf(url) 
-        scan_results["Rate Limiting"] = misconfig.scan_multiple_login_attempts(url)
-        
-        # A08: Integrity
-        scan_results["Integrity Failure"] = integrity.scan(url)
-        
-        # A09: Logging (Included in misconfig)
-        
-        # CSRF
-        scan_results["CSRF"] = csrf.scan(url)
+        # --- Step 3: Global/Generic Scanners ---
+        with console.status("[bold green]Running Global Configuration Scans...[/bold green]"):
+            scan_results["Sensitive Data Exposure"] = sensitive_data.scan(url)
+            scan_results["Broken Authentication"] = auth.scan(url)
+            
+            upload_endpoint = url + "/upload.php"
+            check_endpoint = url + "/uploads"
+            scan_results["Insecure File Upload"] = file_attacks.scan_insecure_file_upload(upload_endpoint, check_endpoint)
+            
+            scan_results["Security Misconfiguration"] = misconfig.scan_security_misconfiguration(url)
+            scan_results["Rate Limiting"] = misconfig.scan_multiple_login_attempts(url)
+            scan_results["Integrity Failure"] = integrity.scan(url)
+            scan_results["CSRF"] = csrf.scan(url)
 
     except KeyboardInterrupt:
-        print(f"\n{Colors.WARNING}[!] Scan interrupted by user. Generating report with available findings...{Colors.ENDC}")
+        Colors.warning("[!] Scan interrupted by user. Generating report with available findings...")
 
     # Flatten for Analysis
     all_vulnerabilities = []
@@ -189,7 +237,6 @@ def main():
     if all_vulnerabilities:
         Colors.info("Analyzing vulnerabilities for Risk Score & Impact...")
         analyzer = RiskAnalyzer()
-        # Note: This modifies objects in place!
         enriched_vulnerabilities = analyzer.analyze(all_vulnerabilities)
         Colors.success(f"Analysis Complete. Processed {len(enriched_vulnerabilities)} findings.")
     else:
@@ -199,7 +246,6 @@ def main():
     # Reporting
     report_path = html_generator.generate_report(user_name, url, enriched_vulnerabilities, scan_summary=scan_results)
     
-    # Export additional formats
     from reporting.json_generator import JsonGenerator
     from reporting.csv_generator import CsvGenerator
     
@@ -209,10 +255,16 @@ def main():
     csv_gen = CsvGenerator()
     csv_path = csv_gen.generate_report(user_name, url, enriched_vulnerabilities)
     
-    Colors.success(f"Reports Generated:")
-    Colors.info(f" - HTML: {report_path}")
-    Colors.info(f" - JSON: {json_path}")
-    Colors.info(f" - CSV:  {csv_path}")
+    # Final Summary Table
+    table = Table(title="Scan Summary")
+    table.add_column("Report Type", style="cyan")
+    table.add_column("Path", style="magenta")
+    
+    table.add_row("HTML Report", report_path)
+    table.add_row("JSON Report", json_path)
+    table.add_row("CSV Report", csv_path)
+    
+    console.print(table)
 
     # Popup
     popup.show_results_popup(report_path)

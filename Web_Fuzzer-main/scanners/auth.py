@@ -19,38 +19,34 @@ def scan(url):
         Colors.warning("Password file not found. Using default credentials.")
         passwords = ["123456", "password", "12345678", "qwerty"]
 
-    usernames = ["admin", "root", "user", "test"] 
-    max_attempts = 20
-    attempts = 0
-
+    usernames = ["admin", "root", "user", "test", "demo", "guest"] 
+    # Removed artificial max_attempts limit to scan all combinations
+    
     for username in usernames:
         for password in passwords:
-            # Exhaustive scan: No attempt limit
-            
-            attempts += 1
             data = {"username": username, "password": password}
-            
             try:
-                # We use a fresh session or the requester logic, but for auth brute force usually we want clean sessions or a specific logic.
-                # using requests directly here for simplicity in session handling if needed, or update requester to support post data
-                response = requests.post(login_url, data=data, timeout=5)
+                # Use a short timeout to keep it relatively fast
+                response = requests.post(login_url, data=data, timeout=3)
 
-                if response.status_code == 200 and "incorrect" not in response.text.lower():
+                if response.status_code == 200 and "incorrect" not in response.text.lower() and "fail" not in response.text.lower():
                     Colors.vuln(f"Weak credentials found: {username}:{password}")
                     vulnerabilities.append({
                         "type": "Broken Authentication",
                         "payload": f"{username}:{password}",
+                        "evidence": f"Login successful with {username}:{password}",
                         "location": f"Login Form ({login_url})",
+                        "endpoint": login_url,
+                        "parameter": "username/password",
                         "impact": "Attacker can gain unauthorized access to user accounts.",
-                        "severity": "High",
+                        "severity": "Critical",
                         "recommendation": "Enforce strong password policies and implement account lockout mechanisms."
                     })
+                    # We found the password for this user, move to next user
                     break 
 
             except requests.exceptions.RequestException:
                 pass
-        
-        if attempts >= max_attempts:
-            break
+
             
     return vulnerabilities

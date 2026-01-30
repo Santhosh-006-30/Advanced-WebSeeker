@@ -1,0 +1,46 @@
+name: "Web Fuzzer Security Scan"
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: '0 0 * * 0' # Weekly scan
+
+jobs:
+  security_scan:
+    name: Run Web Fuzzer
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          
+      - name: Run Security Scanner
+        run: |
+          # Example: Scan the staging environment
+          # In a real setup, you would spin up the app here or define the URL in secrets
+          echo "Starting Security Scan..."
+          # python main.py http://localhost:8000
+          # Note: We are echoing for the demo template. Uncomment the line above to run.
+          
+      - name: Upload Scan Report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-scan-report
+          path: |
+            report.html
+            report.json
+            report.csv

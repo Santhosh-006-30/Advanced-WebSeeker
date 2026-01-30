@@ -64,6 +64,9 @@ def scan(url):
                         "payload": payload,
                         "evidence": f"Database Error Signature matched: '{matched_sig}' in response.",
                         "location": f"Parameter: id (in URL: {test_url})",
+                        "endpoint": url,
+                        "parameter": "id",
+                        "confidence": "High", # Error-based is usually reliable
                         "impact": info["impact"],
                         "severity": "High",
                         "recommendation": info["recommendation"]

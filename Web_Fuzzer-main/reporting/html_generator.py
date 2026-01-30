@@ -1,34 +1,16 @@
 
 from datetime import datetime
-from config import Colors
 import json
+import html
 
 def generate_report(user, url, vulnerabilities, scan_summary=None):
-    Colors.info("Generating Professional Report...")
+    # --- Data Processing & Logic ---
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     report_file = "report.html"
 
-    # Statistics for Charts
+    # Statistics
     severity_counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
     type_counts = {}
-    
-    # OWASP Mapping
-    OWASP_MAPPING = {
-        "SQL Injection": "A03:2021-Injection",
-        "Cross-Site Scripting (XSS)": "A03:2021-Injection",
-        "Command Injection": "A03:2021-Injection",
-        "Broken Authentication": "A07:2021-Ident & Auth Failures",
-        "Sensitive Data Exposure": "A02:2021-Cryptographic Failures",
-        "Security Misconfiguration": "A05:2021-Security Misconfig",
-        "IDOR": "A01:2021-Broken Access Control",
-        "Insecure File Upload": "A04:2021-Insecure Design", # File upload is often design flaw
-        "SSRF": "A10:2021-SSRF",
-        "Brute Force / Multiple Login Attempts": "A07:2021-Ident & Auth Failures",
-        "Directory Traversal": "A01:2021-Broken Access Control",
-        "Vulnerable and Outdated Components": "A06:2021-Vulnerable Components",
-        "Integrity Failure": "A08:2021-Software/Data Integrity",
-        "Logging Failure": "A09:2021-Logging Failures"
-    }
     
     for v in vulnerabilities:
         sev = v.get("severity", "Low")
@@ -38,306 +20,595 @@ def generate_report(user, url, vulnerabilities, scan_summary=None):
         typ = v.get("type", "Other")
         type_counts[typ] = type_counts.get(typ, 0) + 1
 
-    js_severity_data = list(severity_counts.values())
-    js_type_labels = list(type_counts.keys())
-    js_type_data = list(type_counts.values())
-
-    # Optimize Display: Limit number of items for HTML to prevent browser crash
-    MAX_DISPLAY_LIMIT = 500
-    total_findings = len(vulnerabilities)
-    display_vulnerabilities = vulnerabilities
-    truncated = False
+    # Security Score Calculation
+    base_score = 100
+    deductions = (severity_counts["Critical"] * 25) + (severity_counts["High"] * 10) + (severity_counts["Medium"] * 5) + (severity_counts["Low"] * 1)
+    security_score = max(0, base_score - deductions)
     
-    if total_findings > MAX_DISPLAY_LIMIT:
-        Colors.warning(f"Findings ({total_findings}) exceed display limit ({MAX_DISPLAY_LIMIT}). Truncating HTML report.")
-        # Sort by severity score to show most critical first
-        # Assuming RiskAnalyzer added 'cvss_score', otherwise use simple mapping
-        def get_score(v):
-            return v.get("cvss_score", 0)
-            
-        display_vulnerabilities.sort(key=get_score, reverse=True)
-        display_vulnerabilities = display_vulnerabilities[:MAX_DISPLAY_LIMIT]
-        truncated = True
+    grade = "F"
+    grade_color = "text-red-500"
+    if security_score >= 90: grade, grade_color = "A", "text-emerald-500"
+    elif security_score >= 80: grade, grade_color = "B", "text-blue-500"
+    elif security_score >= 70: grade, grade_color = "C", "text-yellow-500"
+    elif security_score >= 60: grade, grade_color = "D", "text-orange-500"
 
-    with open(report_file, "w", encoding="utf-8") as report:
-        report.write(f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Web Fuzzer - Professional Scan Report</title>
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-            <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
-            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-            <style>
-                body {{ background-color: #f4f7f6; font-family: 'Segoe UI', system-ui, sans-serif; }}
-                .sidebar {{ min-height: 100vh; background: #2c3e50; color: white; }}
-                .content {{ padding: 2rem; }}
-                .card {{ border: none; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-radius: 10px; margin-bottom: 20px; }}
-                .header-card {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }}
-                .badge-critical {{ background-color: #d63031; color: white; }}
-                .badge-high {{ background-color: #e17055; color: white; }}
-                .badge-medium {{ background-color: #fdcb6e; color: black; }}
-                .badge-low {{ background-color: #00b894; color: white; }}
-                .badge-secure {{ background-color: #2ecc71; color: white; }} 
-                .status-secure {{ color: #2ecc71; font-weight: bold; }}
-                .status-vuln {{ color: #d63031; font-weight: bold; }}
-                h2, h3 {{ color: #2d3436; }}
-            </style>
-        </head>
-        <body>
-            <div class="d-flex">
-                <!-- Sidebar -->
-                <nav class="sidebar p-3 d-none d-md-block" style="width: 250px;">
-                    <h3 class="mb-4 text-center">🛡️ Web Fuzzer</h3>
-                    <ul class="nav flex-column">
-                        <li class="nav-item mb-2"><a href="#dashboard" class="nav-link text-white"><i class="fas fa-chart-line"></i> Dashboard</a></li>
-                        <li class="nav-item mb-2"><a href="#scope" class="nav-link text-white"><i class="fas fa-tasks"></i> Scan Scope</a></li>
-                        <li class="nav-item mb-2"><a href="#findings" class="nav-link text-white"><i class="fas fa-bug"></i> Findings</a></li>
-                    </ul>
-                    <div class="mt-5 text-small text-muted text-center">v2.1 Enterprise</div>
-                </nav>
-
-                <!-- Content -->
-                <div class="content w-100">
-                    <div class="card header-card p-4 mb-4" id="dashboard">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <h1 class="display-6 fw-bold">Executive Summary</h1>
-                                <p class="mb-0">Target: <strong>{url}</strong> | Scanned by: <strong>{user}</strong> | Date: <strong>{now}</strong></p>
-                            </div>
-                            <div class="text-end">
-                                <h2 class="display-4 fw-bold">{len(vulnerabilities)}</h2>
-                                <span>Issues Found</span>
-                            </div>
-                        </div>
-                        <div class="row mt-3">
-                            <div class="col-md-6 text-start">
-                                <p class="text-muted"><small>Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small></p>
-                            </div>
-                            <div class="col-md-6 text-end">
-                                <button onclick="window.print()" class="btn btn-outline-primary"><i class="fas fa-file-pdf"></i> Export to PDF</button>
-                                <a href="report.json" download class="btn btn-outline-dark"><i class="fas fa-file-code"></i> JSON</a>
-                                <a href="report.csv" download class="btn btn-outline-success"><i class="fas fa-file-csv"></i> CSV</a>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Metrics Row -->
-                    <div class="row mb-4">
-                        <div class="col-md-3">
-                            <div class="card p-3 border-start border-5 border-danger">
-                                <h5 class="text-secondary">Critical</h5>
-                                <h3>{severity_counts['Critical']}</h3>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card p-3 border-start border-5 border-warning">
-                                <h5 class="text-secondary">High</h5>
-                                <h3>{severity_counts['High']}</h3>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card p-3 border-start border-5 border-warning opacity-75">
-                                <h5 class="text-secondary">Medium</h5>
-                                <h3>{severity_counts['Medium']}</h3>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card p-3 border-start border-5 border-success">
-                                <h5 class="text-secondary">Low</h5>
-                                <h3>{severity_counts['Low']}</h3>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Charts Row -->
-                    <div class="row mb-4">
-                        <div class="col-md-6">
-                            <div class="card p-4">
-                                <h5>Vulnerability Distribution</h5>
-                                <canvas id="typeChart"></canvas>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="card p-4">
-                                <h5>Risk Profile</h5>
-                                <canvas id="severityChart"></canvas>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Scan Scope & Compliance -->
-                    <h2 class="mb-3" id="scope">📋 Scan Scope & Compliance</h2>
-                    <div class="card p-4 mb-4">
-                        <div class="alert alert-info">
-                            <i class="fas fa-info-circle"></i> <strong>Methodology:</strong> This assessment utilized a hybrid dynamic analysis (DAST) approach. 
-                            Modules marked as <span class="badge badge-secure">Not Detected</span> were tested against known payloads but yielded no successful exploitation.
-                        </div>
-                        <table class="table table-hover table-bordered">
-                            <thead class="table-light">
-                                <tr>
-                                    <th style="width: 25%">Security Module</th>
-                                    <th style="width: 45%">Attack Vectors / Checks Performed</th>
-                                    <th style="width: 15%">Status</th>
-                                    <th style="width: 15%">Findings</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-        """)
+    # Top Targets Logic
+    endpoint_risk = {}
+    for v in vulnerabilities:
+        ep = v.get("location", "Unknown")
+        display_ep = ep.split("?")[0]
+        if len(display_ep) > 50: display_ep = "..." + display_ep[-45:]
         
-        # Scope Descriptions (Academic/Professional descriptions)
-        scope_details = {
-            "SQL Injection": "Boolean-based, Error-based, Time-based, and Union-based injection tests on URL parameters.",
-            "Cross-Site Scripting (XSS)": "Reflected and Stored XSS checks using polyglot payloads and event handler injection.",
-            "Broken Authentication": "Default credential testing, weak password spraying, and login page analysis.",
-            "Sensitive Data Exposure": "Scanning for backup files (.bak, .old), configuration files (.env, .git), and PII in responses.",
-            "Command Injection": "OS command execution tests (e.g., ;ls, |whoami) on input fields.",
-            "Directory Traversal": "Path traversal attempts (../../) to access system files (/etc/passwd, boot.ini).",
-            "Insecure File Upload": "MIME type bypass, extension spoofing, and executable file upload attempts.",
-            "CSRF": "Verification of anti-CSRF tokens and SameSite cookie attributes on state-changing forms.",
-            "IDOR": "Sequential and random ID probing to detect horizontal/vertical privilege escalation.",
-            "Security Misconfiguration": "Server header analysis, debug info checking, and default page detection.",
-            "Rate Limiting": "Brute-force simulation to verify request throttling and account lockout mechanisms."
+        weight = {"Critical": 10, "High": 5, "Medium": 2, "Low": 1}.get(v.get("severity"), 0)
+        
+        if ep not in endpoint_risk:
+            endpoint_risk[ep] = {"display": display_ep, "count": 0, "score": 0, "criticals": 0}
+        
+        endpoint_risk[ep]["count"] += 1
+        endpoint_risk[ep]["score"] += weight
+        if v.get("severity") == "Critical": endpoint_risk[ep]["criticals"] += 1
+
+    top_targets = sorted(endpoint_risk.values(), key=lambda x: x["score"], reverse=True)[:5]
+
+    # Executive Summary Text
+    primary_threats = sorted(type_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+    threat_text = ", ".join([t[0] for t in primary_threats]) if primary_threats else "None"
+    
+    analysis_text = f"The automated security assessment of <strong>{html.escape(url)}</strong> has resulted in a Security Grade of <strong class='{grade_color}'>{grade}</strong> ({security_score}/100). "
+    
+    if grade in ['A', 'B']:
+        analysis_text += "The application demonstrates a <strong>strong security posture</strong>. Code quality appears high, though continuous monitoring is advised to maintain this baseline. "
+    elif grade == 'C':
+        analysis_text += "The application exhibits a <strong>moderate risk profile</strong>. While basic protections are in place, significant gaps exist that could be exploited. "
+    else:
+        analysis_text += "The application is currently in a <strong>CRITICAL RISK STATE</strong>. Multiple high-severity vulnerabilities were detected. Immediate remediation is required to prevent compromise. "
+
+    if severity_counts['Critical'] > 0:
+        analysis_text += f"<br><br>Immediate attention is needed for <strong>{severity_counts['Critical']} Critical</strong> vulnerabilities. "
+    
+    if primary_threats:
+        analysis_text += f"The most prevalent attack vectors identified are <strong>{html.escape(threat_text)}</strong>. "
+
+    # Remediation Library
+    try:
+        from core.remediation import RemediationLibrary
+        remedy_lib = RemediationLibrary()
+        fixes_data = remedy_lib.fixes
+    except ImportError:
+        fixes_data = {}
+
+    # --- HTML Generation ---
+    stats = {
+        "total": len(vulnerabilities),
+        "critical": severity_counts.get("Critical", 0),
+        "high": severity_counts.get("High", 0),
+        "medium": severity_counts.get("Medium", 0),
+        "low": severity_counts.get("Low", 0), 
+        "by_type": type_counts,
+        "security_score": security_score,
+        "grade": grade,
+        "grade_color": grade_color,
+        "top_targets": top_targets,
+        "analysis": analysis_text
+    }
+
+    # Prepare JSON Payloads
+    findings_json = json.dumps(vulnerabilities).replace("</script>", "<\\/script>")
+    stats_json = json.dumps(stats).replace("</script>", "<\\/script>")
+    meta_json = json.dumps({"url": url, "user": user, "date": now}).replace("</script>", "<\\/script>")
+    fixes_json = json.dumps(fixes_data).replace("</script>", "<\\/script>")
+
+    # Use Raw String Layout to avoid f-string brace conflicts with CSS/JS
+    html_template = r"""
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Audit Report - __URL_PLACEHOLDER__</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Syntax Highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" />
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        slate: {
+                            850: '#1e293b',
+                            900: '#0f172a',
+                            950: '#020617',
+                        },
+                        primary: {
+                            50: '#f0fdfa',
+                            100: '#ccfbf1',
+                            500: '#14b8a6',
+                            600: '#0d9488',
+                            900: '#134e4a',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+        
+        .glass {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .card-hover:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+            border-color: rgba(20, 184, 166, 0.3);
         }
 
-        # Render Scan Summary Table
-        if scan_summary:
-            for module_name, findings in scan_summary.items():
-                count = len(findings)
-                description = scope_details.get(module_name, "Standard vulnerability assessment.")
-                
-                status_label = '<span class="status-secure"><i class="fas fa-check-circle"></i> Not Detected</span>'
-                row_class = ""
-                
-                if count > 0:
-                    status_label = '<span class="status-vuln"><i class="fas fa-exclamation-triangle"></i> Detected</span>'
-                    row_class = "table-warning"
-                
-                report.write(f"""
-                <tr class="{row_class}">
-                    <td class="fw-bold">{module_name}</td>
-                    <td><small class="text-muted">{description}</small></td>
-                    <td>{status_label}</td>
-                    <td>{count} issue(s)</td>
-                </tr>
-                """)
-        else:
-             report.write("<tr><td colspan='4'>Full scan summary not available.</td></tr>")
+        pre { margin: 0 !important; border-radius: 0.5rem; }
+        
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-300 antialiased h-screen flex overflow-hidden selection:bg-primary-500 selection:text-white">
 
-        report.write("""
-                            </tbody>
-                        </table>
-                    </div>
+    <!-- Sidebar -->
+    <aside class="w-72 bg-slate-900/50 border-r border-slate-800 flex-shrink-0 flex flex-col z-20 glass">
+        <div class="p-6 flex items-center gap-3 border-b border-slate-800/50">
+            <div class="h-10 w-10 flex items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-emerald-600 shadow-lg shadow-emerald-900/20 text-white font-bold text-xl">
+                <i class="fa-solid fa-shield-halved"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-slate-100 tracking-tight text-lg">WebFuzzer</h1>
+                <p class="text-[10px] font-mono uppercase tracking-widest text-primary-500 font-semibold">Enterprise Report</p>
+            </div>
+        </div>
 
-                    <!-- Findings Section -->
-                    <h2 class="mb-3" id="findings">🔍 Detailed Findings</h2>
-                    <div class="card p-3">
-        """)
-
-        if not vulnerabilities:
-            report.write("<div class='alert alert-success'>✅ No vulnerabilities found. System appears secure.</div>")
-        else:
-            if truncated:
-                 report.write(f"""
-                 <div class='alert alert-warning border-2 border-warning'>
-                    <h4 class="alert-heading"><i class="fas fa-exclamation-triangle"></i> Report Truncated</h4>
-                    <p>The scanner found a total of <strong>{total_findings}</strong> vulnerabilities. 
-                    For performance reasons, only the top <strong>{MAX_DISPLAY_LIMIT}</strong> most critical findings are displayed below.</p>
-                    <hr>
-                    <p class="mb-0">Please download the <strong>CSV</strong> or <strong>JSON</strong> report for the complete dataset.</p>
-                 </div>
-                 """)
-                 
-            report.write('<div class="accordion" id="vulnAccordion">')
+        <nav class="flex-1 overflow-y-auto py-6 px-4 space-y-1">
+            <button onclick="router.navigate('dashboard')" id="nav-dashboard" class="nav-item w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-all duration-200 hover:bg-slate-800 hover:text-white text-slate-400">
+                <i class="fa-solid fa-chart-line w-5 text-center"></i>
+                Dashboard
+            </button>
             
-            for index, v in enumerate(display_vulnerabilities):
-                sev = v.get("severity", "Low")
-                badge_class = "badge-low"
-                if sev == "Critical": badge_class = "badge-critical"
-                elif sev == "High": badge_class = "badge-high"
-                elif sev == "Medium": badge_class = "badge-medium"
+            <div class="pt-6 pb-2 px-4 text-[10px] font-bold uppercase tracking-widest text-slate-600">Findings</div>
+            <div id="category-nav"></div>
+        </nav>
 
-                cvss = v.get("cvss_score", "N/A")
-                vector = v.get("cvss_vector", "")
+        <div class="p-4 border-t border-slate-800/50 bg-slate-900/30">
+            <div class="flex items-center gap-3">
+                <div class="h-8 w-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-slate-300">
+                    <i class="fa-solid fa-user"></i>
+                </div>
+                <div class="overflow-hidden">
+                    <p class="text-xs font-medium text-white truncate">__USER_NAME__</p>
+                    <p class="text-[10px] text-slate-500 truncate">__SCAN_DATE__</p>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col min-w-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-slate-950">
+        
+        <!-- Header -->
+        <header class="h-16 border-b border-slate-800 flex items-center justify-between px-8 bg-slate-950/80 backdrop-blur-sm sticky top-0 z-10">
+            <h2 id="page-title" class="text-lg font-semibold text-slate-100">Executive Dashboard</h2>
+            
+            <div class="flex items-center gap-4">
+                <div class="relative group">
+                    <i class="fa-solid fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-primary-500 transition-colors"></i>
+                    <input type="text" id="global-search" placeholder="Search findings..." class="bg-slate-900/50 border border-slate-700 text-sm rounded-lg pl-10 pr-4 py-2 w-64 focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 transition-all placeholder-slate-600 text-slate-200">
+                </div>
                 
-                owasp_tag = OWASP_MAPPING.get(v['type'], "OWASP Top 10")
+                <button onclick="window.print()" class="h-9 w-9 flex items-center justify-center rounded-lg border border-slate-700 text-slate-400 hover:text-white hover:bg-slate-800 transition-all" title="Print Report">
+                    <i class="fa-solid fa-print"></i>
+                </button>
+            </div>
+        </header>
 
-                report.write(f"""
-                <div class="accordion-item mb-2 border">
-                    <h2 class="accordion-header" id="heading{index}">
-                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse{index}">
-                            <span class="badge {badge_class} me-2">{sev}</span>
-                            <span class="badge bg-secondary me-3">{owasp_tag}</span>
-                            <span class="fw-bold">{v['type']}</span> 
-                            <span class="ms-auto text-muted small">{v.get('location', 'N/A')}</span>
-                        </button>
-                    </h2>
-                    <div id="collapse{index}" class="accordion-collapse collapse" data-bs-parent="#vulnAccordion">
-                        <div class="accordion-body bg-light">
-                            <div class="row">
-                                <div class="col-md-8">
-                                    <p><strong>&#x1F4CD; Location:</strong> <code>{v.get('location', 'N/A')}</code></p>
-                                    <p><strong>&#x1F4A3; Payload:</strong> <code>{v['payload']}</code></p>
-                                    <p><strong>&#x1F441; Evidence:</strong> <code style="color: #d63031;">{v.get('evidence', 'See Payload')}</code></p>
-                                    <p><strong>&#x1F4A5; Impact:</strong> {v.get('impact', 'N/A')}</p>
-                                    <p><strong>&#x1F6E0; Remediation:</strong> {v['recommendation']}</p>
+        <!-- Dynamic Content Area -->
+        <div id="content-area" class="flex-1 overflow-y-auto p-8 scroll-smooth">
+            <!-- Content Injected via JS -->
+        </div>
+
+    </main>
+
+    <!-- Templates -->
+    
+    <!-- Dashboard Template -->
+    <template id="tmpl-dashboard">
+        <div class="max-w-7xl mx-auto space-y-8 animate-[fadeIn_0.5s_ease-out]">
+            
+            <!-- Hero Section -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Score Card -->
+                <div class="lg:col-span-1 glass rounded-2xl p-1 relative overflow-hidden group">
+                    <div class="absolute inset-0 bg-gradient-to-br from-primary-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                    <div class="bg-slate-900/90 h-full rounded-xl p-8 flex flex-col items-center justify-center relative z-10">
+                        <div class="relative mb-4">
+                            <svg class="w-40 h-40 transform -rotate-90">
+                                <circle cx="80" cy="80" r="70" stroke="currentColor" stroke-width="8" fill="transparent" class="text-slate-800" />
+                                <circle cx="80" cy="80" r="70" stroke="currentColor" stroke-width="8" fill="transparent" :class="scoreColor" stroke-dasharray="440" :stroke-dashoffset="440 - (440 * score / 100)" class="transition-all duration-1000 ease-out" id="score-circle" />
+                            </svg>
+                            <div class="absolute inset-0 flex items-center justify-center flex-col">
+                                <span class="text-6xl font-black text-white tracking-tighter" id="grade-display">-</span>
+                                <span class="text-xs font-bold uppercase tracking-widest text-slate-500 mt-1">Grade</span>
+                            </div>
+                        </div>
+                        <div class="text-sm font-medium text-slate-400">Security Score: <span class="font-bold text-white" id="score-display">0</span>/100</div>
+                    </div>
+                </div>
+
+                <!-- Exec Summary -->
+                <div class="lg:col-span-2 glass rounded-2xl p-8 flex flex-col justify-center relative overflow-hidden">
+                    <div class="flex items-center gap-3 mb-4 text-primary-400">
+                        <i class="fa-solid fa-wave-square"></i>
+                        <h3 class="text-sm font-bold uppercase tracking-widest">Analysis Summary</h3>
+                    </div>
+                    <p class="text-slate-300 leading-relaxed text-lg" id="summary-text"></p>
+                </div>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl relative overflow-hidden group hover:border-red-500/50 transition-colors cursor-pointer" onclick="router.filter('Critical')">
+                    <div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity"><i class="fa-solid fa-skull text-6xl text-red-500"></i></div>
+                    <div class="text-red-500 text-sm font-bold uppercase tracking-wider mb-1">Critical</div>
+                    <div class="text-4xl font-black text-white" id="stat-critical">0</div>
+                </div>
+                <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl relative overflow-hidden group hover:border-orange-500/50 transition-colors cursor-pointer" onclick="router.filter('High')">
+                    <div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity"><i class="fa-solid fa-fire text-6xl text-orange-500"></i></div>
+                    <div class="text-orange-500 text-sm font-bold uppercase tracking-wider mb-1">High</div>
+                    <div class="text-4xl font-black text-white" id="stat-high">0</div>
+                </div>
+                <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl relative overflow-hidden group hover:border-yellow-500/50 transition-colors cursor-pointer" onclick="router.filter('Medium')">
+                    <div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity"><i class="fa-solid fa-triangle-exclamation text-6xl text-yellow-500"></i></div>
+                    <div class="text-yellow-500 text-sm font-bold uppercase tracking-wider mb-1">Medium</div>
+                    <div class="text-4xl font-black text-white" id="stat-medium">0</div>
+                </div>
+                <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl relative overflow-hidden group hover:border-blue-500/50 transition-colors cursor-pointer" onclick="router.filter('all')">
+                    <div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity"><i class="fa-solid fa-list-check text-6xl text-blue-500"></i></div>
+                    <div class="text-blue-500 text-sm font-bold uppercase tracking-wider mb-1">Total Issues</div>
+                    <div class="text-4xl font-black text-white" id="stat-total">0</div>
+                </div>
+            </div>
+
+            <!-- Visualizations & Targets -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Charts -->
+                <div class="glass p-6 rounded-xl border border-slate-800">
+                    <h4 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">Vulnerability Distribution</h4>
+                    <div class="h-64"><canvas id="chart-types"></canvas></div>
+                </div>
+                
+                <!-- Top Targets -->
+                <div class="glass p-6 rounded-xl border border-slate-800">
+                    <h4 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">High Risk Endpoints</h4>
+                    <div class="space-y-4" id="top-targets-list"></div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- JS Logic -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+
+    <script>
+        // --- DATA INJECTION ---
+        const DATA = {
+            stats: __STATS_JSON__,
+            findings: __FINDINGS_JSON__,
+            fixes: __FIXES_JSON__,
+            meta: __META_JSON__
+        };
+
+        // --- ROUTER & STATE ---
+        const router = {
+            view: 'dashboard',
+            filterCat: null,
+            filterSev: null,
+            search: '',
+            
+            navigate(view) {
+                this.view = view;
+                this.filterCat = null;
+                this.filterSev = null;
+                this.search = '';
+                render();
+            },
+            
+            filter(sev) {
+                this.view = 'findings';
+                this.filterSev = sev === 'all' ? null : sev;
+                render();
+            },
+            
+            filterCategory(cat) {
+                this.view = 'findings';
+                this.filterCat = cat;
+                render();
+            }
+        };
+
+        // --- UTILS ---
+        const getSeverityConfig = (sev) => {
+            switch(sev) {
+                case 'Critical': return { color: 'text-red-500', bg: 'bg-red-500/10', border: 'border-red-500/20', icon: 'fa-skull' };
+                case 'High': return { color: 'text-orange-500', bg: 'bg-orange-500/10', border: 'border-orange-500/20', icon: 'fa-fire' };
+                case 'Medium': return { color: 'text-yellow-500', bg: 'bg-yellow-500/10', border: 'border-yellow-500/20', icon: 'fa-triangle-exclamation' };
+                case 'Low': return { color: 'text-blue-500', bg: 'bg-blue-500/10', border: 'border-blue-500/20', icon: 'fa-info-circle' };
+                default: return { color: 'text-slate-500', bg: 'bg-slate-500/10', border: 'border-slate-500/20', icon: 'fa-circle-question' };
+            }
+        };
+
+        function escapeHtml(unsafe) {
+            if (!unsafe) return '';
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        // --- RENDERERS ---
+        function render() {
+            const content = document.getElementById('content-area');
+            const pageTitle = document.getElementById('page-title');
+            
+            // Update Active Nav
+            document.querySelectorAll('.nav-item').forEach(el => {
+                if(router.view === 'dashboard' && el.id === 'nav-dashboard') {
+                    el.classList.add('bg-slate-800', 'text-white');
+                    el.classList.remove('text-slate-400');
+                } else {
+                    el.classList.remove('bg-slate-800', 'text-white');
+                    el.classList.add('text-slate-400');
+                }
+            });
+
+            if (router.view === 'dashboard') {
+                pageTitle.innerText = "Executive Dashboard";
+                renderDashboard(content);
+            } else if (router.view === 'findings') {
+                pageTitle.innerText = "Security Findings";
+                renderFindings(content);
+            }
+        }
+
+        function renderDashboard(container) {
+            const tmpl = document.getElementById('tmpl-dashboard').content.cloneNode(true);
+            
+            // Fill Stats
+            tmpl.getElementById('grade-display').textContent = DATA.stats.grade;
+            tmpl.getElementById('grade-display').className = `text-6xl font-black tracking-tighter ${
+                { 'A': 'text-emerald-400', 'B': 'text-blue-400', 'C': 'text-yellow-400', 'D': 'text-orange-400', 'F': 'text-red-500' }
+            [DATA.stats.grade] || 'text-slate-400'}`;
+            
+            tmpl.getElementById('score-display').textContent = DATA.stats.security_score;
+            tmpl.getElementById('score-circle').style.strokeDashoffset = 440 - (440 * DATA.stats.security_score / 100);
+            tmpl.getElementById('score-circle').classList.add({
+                'A': 'text-emerald-500', 'B': 'text-blue-500', 'C': 'text-yellow-500', 'D': 'text-orange-500', 'F': 'text-red-500'
+            }[DATA.stats.grade] || 'text-slate-500');
+
+            tmpl.getElementById('summary-text').innerHTML = DATA.stats.analysis;
+            
+            tmpl.getElementById('stat-total').textContent = DATA.stats.total;
+            tmpl.getElementById('stat-critical').textContent = DATA.stats.critical;
+            tmpl.getElementById('stat-high').textContent = DATA.stats.high;
+            tmpl.getElementById('stat-medium').textContent = DATA.stats.medium;
+
+            // Top Targets
+            const targetsContainer = tmpl.getElementById('top-targets-list');
+            if(DATA.stats.top_targets.length === 0) {
+                targetsContainer.innerHTML = '<div class="text-slate-500 text-sm italic">No vulnerable targets found.</div>';
+            } else {
+                DATA.stats.top_targets.forEach(t => {
+                    targetsContainer.innerHTML += `
+                        <div class="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-800 hover:border-slate-700 transition">
+                            <div class="flex items-center gap-3 overflow-hidden">
+                                <span class="h-8 w-8 rounded bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-400">${t.count}</span>
+                                <span class="text-sm font-mono text-slate-300 truncate">${escapeHtml(t.display)}</span>
+                            </div>
+                            ${t.criticals > 0 ? `<span class="px-2 py-1 rounded text-xs font-bold bg-red-500/20 text-red-500 border border-red-500/20">${t.criticals} Crit</span>` : ''}
+                        </div>
+                    `;
+                });
+            }
+
+            container.innerHTML = '';
+            container.appendChild(tmpl);
+
+            // Chart
+            const ctx = document.getElementById('chart-types').getContext('2d');
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: Object.keys(DATA.stats.by_type),
+                    datasets: [{
+                        label: 'Vulnerabilities',
+                        data: Object.values(DATA.stats.by_type),
+                        backgroundColor: '#0d9488',
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { grid: { color: '#1e293b' }, ticks: { color: '#94a3b8' } },
+                        x: { grid: { display: false }, ticks: { color: '#94a3b8' } }
+                    }
+                }
+            });
+        }
+
+        function renderFindings(container) {
+            let findings = DATA.findings;
+            
+            // filtering
+            if (router.filterSev) findings = findings.filter(f => f.severity === router.filterSev);
+            if (router.filterCat) findings = findings.filter(f => f.type === router.filterCat);
+            if (router.search) {
+                const q = router.search.toLowerCase();
+                findings = findings.filter(f => 
+                    f.type.toLowerCase().includes(q) || 
+                    f.location.toLowerCase().includes(q) || 
+                    (f.payload && f.payload.toLowerCase().includes(q))
+                );
+            }
+
+            let html = `<div class="max-w-5xl mx-auto space-y-4 animate-[fadeIn_0.3s_ease-out]">`;
+            
+            if (findings.length === 0) {
+                html += `<div class="p-12 text-center text-slate-500 border border-dashed border-slate-800 rounded-xl">No findings match your criteria.</div>`;
+            } else {
+                findings.forEach((f, idx) => {
+                    const conf = getSeverityConfig(f.severity);
+                    const fix = DATA.fixes[f.type] || { secure_code: '# See OWASP guidelines', tips: ['Manual review required'] };
+                    // Simple replacement for dynamic fix code
+                    let secureCode = fix.secure_code.replace(/user_input/g, f.parameter || 'input');
+
+                    html += `
+                    <div class="group bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden hover:border-slate-700 transition-all duration-200" id="finding-${idx}">
+                        <div class="p-5 cursor-pointer flex items-start gap-4" onclick="toggleDetails(${idx})">
+                            <div class="mt-1 flex-shrink-0 w-24">
+                                <span class="px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${conf.bg} ${conf.text} ${conf.border} shadow-sm flex items-center justify-center gap-2">
+                                    <i class="fa-solid ${conf.icon}"></i> ${f.severity}
+                                </span>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <div class="flex justify-between items-start">
+                                    <h3 class="font-bold text-slate-200 text-lg group-hover:text-primary-400 transition-colors">${escapeHtml(f.type)}</h3>
+                                    <i class="fa-solid fa-chevron-down text-slate-600 transition-transform duration-300" id="icon-${idx}"></i>
                                 </div>
-                                <div class="col-md-4 border-start">
-                                    <h6>Risk Analysis</h6>
-                                    <ul class="list-unstyled">
-                                        <li><strong>CVSS Score:</strong> {cvss}</li>
-                                        <li><strong>Vector:</strong> <small><code>{vector}</code></small></li>
-                                    </ul>
+                                <div class="text-xs font-mono text-slate-500 mt-1 truncate">${escapeHtml(f.location)}</div>
+                            </div>
+                        </div>
+                        
+                        <div id="details-${idx}" class="hidden border-t border-slate-800/50 bg-slate-950/30">
+                            <div class="p-6 grid grid-cols-1 xl:grid-cols-2 gap-8">
+                                <div class="space-y-6">
+                                    <div>
+                                        <h4 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Evidence (Payload)</h4>
+                                        <div class="relative group/code">
+                                            <pre><code class="language-none text-red-300 text-sm">${escapeHtml(f.payload || 'N/A')}</code></pre>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <h4 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Impact Analysis</h4>
+                                        <p class="text-sm text-slate-400 leading-relaxed">${escapeHtml(f.impact || 'No impact details provided.')}</p>
+                                    </div>
+                                </div>
+                                
+                                <div class="space-y-6">
+                                    <div>
+                                        <h4 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 text-emerald-500">Recommended Fix</h4>
+                                        <div class="bg-[#1d1f21] rounded-lg border border-slate-800 overflow-hidden">
+                                            <div class="flex justify-between items-center px-3 py-2 border-b border-slate-800 bg-[#252526]">
+                                                <span class="text-[10px] text-slate-500 font-mono">SECURE_CODING_PATTERN</span>
+                                            </div>
+                                            <pre class="!m-0 !bg-transparent"><code class="language-python">${escapeHtml(secureCode)}</code></pre>
+                                        </div>
+                                        <div class="mt-3 flex gap-2">
+                                            ${ (fix.tips || []).map(tip => `<span class="inline-flex items-center px-2 py-1 rounded bg-slate-800 text-[10px] text-slate-400 border border-slate-700"><i class="fa-solid fa-lightbulb text-yellow-500/50 mr-2"></i> ${tip}</span>`).join('') }
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
-                """)
-            report.write('</div>') # End Accordion
+                    `;
+                });
+            }
+            html += `</div>`;
+            container.innerHTML = html;
+            Prism.highlightAllUnder(container);
+        }
 
-        report.write(f"""
-                    </div> <!-- End Card -->
-                </div> <!-- End Content -->
-            </div>
+        function toggleDetails(idx) {
+            const details = document.getElementById(`details-${idx}`);
+            const icon = document.getElementById(`icon-${idx}`);
+            
+            if (details.classList.contains('hidden')) {
+                details.classList.remove('hidden');
+                icon.style.transform = 'rotate(180deg)';
+            } else {
+                details.classList.add('hidden');
+                icon.style.transform = 'rotate(0deg)';
+            }
+        }
 
-            <script>
-                // Severity Chart
-                const ctxSev = document.getElementById('severityChart').getContext('2d');
-                new Chart(ctxSev, {{
-                    type: 'doughnut',
-                    data: {{
-                        labels: ['Critical', 'High', 'Medium', 'Low'],
-                        datasets: [{{
-                            data: {js_severity_data},
-                            backgroundColor: ['#d63031', '#e17055', '#fdcb6e', '#00b894']
-                        }}]
-                    }}
-                }});
+        // --- INIT ---
+        document.addEventListener('DOMContentLoaded', () => {
+            // Build Side Nav
+            const nav = document.getElementById('category-nav');
+            Object.keys(DATA.stats.by_type).sort().forEach(k => {
+                const btn = document.createElement('button');
+                btn.className = 'w-full flex items-center justify-between px-4 py-2 text-xs text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors mb-1 group';
+                btn.innerHTML = `<span>${k}</span><span class="bg-slate-800 group-hover:bg-slate-700 px-1.5 py-0.5 rounded text-[10px] text-slate-500 group-hover:text-slate-300 transition">${DATA.stats.by_type[k]}</span>`;
+                btn.onclick = () => router.filterCategory(k);
+                nav.appendChild(btn);
+            });
 
-                // Type Chart
-                const ctxType = document.getElementById('typeChart').getContext('2d');
-                new Chart(ctxType, {{
-                    type: 'bar',
-                    data: {{
-                        labels: {json.dumps(js_type_labels)},
-                        datasets: [{{
-                            label: 'Count',
-                            data: {js_type_data},
-                            backgroundColor: '#6c5ce7'
-                        }}]
-                    }},
-                    options: {{
-                        scales: {{ y: {{ beginAtZero: true }} }}
-                    }}
-                }});
-            </script>
-            <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-        </body>
-        </html>
-        """)
+            // Global Search Listener
+            let searchTimeout;
+            document.getElementById('global-search').addEventListener('input', (e) => {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => {
+                    router.view = 'findings';
+                    router.search = e.target.value;
+                    render();
+                }, 300);
+            });
+
+            render();
+        });
+    </script>
+</body>
+</html>
+"""
     
-    Colors.success(f"Professional Report generated: {report_file}")
+    # Inject Data
+    html_content = html_template.replace("__STATS_JSON__", stats_json) \
+                                .replace("__FINDINGS_JSON__", findings_json) \
+                                .replace("__FIXES_JSON__", fixes_json) \
+                                .replace("__META_JSON__", meta_json) \
+                                .replace("__URL_PLACEHOLDER__", html.escape(url)) \
+                                .replace("__USER_NAME__", html.escape(user)) \
+                                .replace("__SCAN_DATE__", now)
+
+    with open(report_file, "w", encoding="utf-8") as f:
+        f.write(html_content)
+        
     return report_file

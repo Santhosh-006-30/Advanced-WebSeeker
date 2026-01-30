@@ -30,7 +30,15 @@ def scan_idor(url):
 
 def scan_security_misconfiguration(url):
     vulnerabilities = []
-    sensitive_files = ["/robots.txt", "/.git/", "/.htaccess", "/.env"]
+    sensitive_files = [
+        "/robots.txt", "/.git/", "/.htaccess", "/.env", "/.DS_Store", 
+        "/config.php", "/config.json", "/web.config", 
+        "/backup.zip", "/backup.sql", "/database.sql", "/dump.sql",
+        "/admin/", "/dashboard/", "/phpinfo.php", "/info.php",
+        "/aws.yml", "/docker-compose.yml", "/Dockerfile", 
+        "/id_rsa", "/id_rsa.pub", "/known_hosts",
+        "/sitemap.xml", "/trace.axd", "/server-status"
+    ]
     Colors.info("Testing for Security Misconfigurations...")
 
     for file in sensitive_files:
